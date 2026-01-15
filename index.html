@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Стратегическое Командование - Обновление Зоны Запрета</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        :root { --bg: #020617; --ui-accent: #39ff14; --alert: #ff4500; --mass-attack: #7f1d1d; }
+        body, html { margin: 0; padding: 0; height: 100%; background: var(--bg); font-family: 'Courier New', monospace; overflow: hidden; color: white; }
+        .wrapper { display: grid; grid-template-columns: 350px 1fr; height: 100vh; }
+        .sidebar { background: #0f172a; border-right: 2px solid #1e293b; padding: 20px; z-index: 1000; overflow-y: auto; }
+        #map { width: 100%; height: 100%; cursor: crosshair; filter: saturate(1.1) contrast(1.1) brightness(0.8); }
+        
+        .missile-body { width: 4px; height: 25px; background: linear-gradient(to bottom, #d1d5db, #4b5563); border-radius: 2px; position: relative; }
+        .missile-body::after {
+            content: ''; position: absolute; bottom: -10px; left: 50%; transform: translateX(-50%);
+            width: 6px; height: 15px; background: linear-gradient(to bottom, #ff4500, transparent);
+            filter: blur(1px); box-shadow: 0 0 10px #ff4500; animation: flicker 0.1s infinite alternate;
+        }
+
+        @keyframes flicker { from { height: 12px; opacity: 0.8; } to { height: 18px; opacity: 1; } }
+
+        #console { background: #000; border: 1px solid #166534; padding: 10px; color: var(--ui-accent); font-size: 0.75rem; height: 180px; overflow-y: auto; margin: 15px 0; border-radius: 4px; }
+        .launch-btn { width: 100%; padding: 15px; background: #450a0a; color: #ef4444; border: 2px solid #ef4444; font-weight: bold; cursor: pointer; margin-bottom: 5px; }
+        .mass-btn { width: 100%; padding: 20px; background: var(--mass-attack); color: #fca5a5; border: 2px solid #b91c1c; font-weight: bold; cursor: pointer; margin-bottom: 10px; display: none; }
+        .launch-btn:hover:not(:disabled) { background: var(--alert); color: white; }
+        .mass-btn:hover:not(:disabled) { background: #b91c1c; color: white; box-shadow: 0 0 30px #ff0000; }
+        
+        .city-btn { width: 100%; padding: 10px; background: #1e293b; color: #94a3b8; border: 1px solid #334155; cursor: pointer; margin-bottom: 5px; text-align: left; font-size: 0.8rem; }
+        .city-btn:hover { background: #334155; color: var(--ui-accent); }
+
+        #gifContainer {
+            margin-top: 20px;
+            width: 100%;
+            display: none;
+            border: 1px solid var(--ui-accent);
+            border-radius: 4px;
+            overflow: hidden;
+            background: #000;
+        }
+        #gifContainer img { width: 100%; height: auto; display: block; }
+    </style>
+</head>
+<body onclick="initAudio()">
+
+<audio id="bgMusic" loop src="boom.mp3"></audio>
+<audio id="siren" src="rosja.mp3"></audio>
+
+<div class="wrapper">
+    <div class="sidebar">
+        <h2 style="color:var(--ui-accent)">[ ОМЕГА КОМАНДОВАНИЕ ]</h2>
+        <div style="font-size: 0.65rem; color: #64748b; margin-bottom: 10px;">ПОДСКАЗКА: CTRL + КЛИК = Несколько целей</div>
+        <div id="console">> СИСТЕМА ОНЛАЙН.<br>> ОЖИДАНИЕ ЦЕЛЕЙ.</div>
+        
+        <button id="launchBtn" class="launch-btn" disabled onclick="launchAttack(1)">ТОЧЕЧНЫЙ УДАР</button>
+        <button id="massBtn" class="mass-btn" onclick="launchAttack(50)">МАССИРОВАННЫЙ ЗАЛП</button>
+        
+        <button class="city-btn" style="border-color: #ef4444; margin-top: 10px;" onclick="clearTargets()">ОЧИСТИТЬ СПИСОК</button>
+        <h3 style="color:var(--ui-accent); font-size: 0.8rem; margin-top: 20px;">ГЕОЛОКАЦИИ:</h3>
+        <button class="city-btn" onclick="setTarget(50.45, 30.52, 'КИЕВ')">КИЕВ</button>
+        <button class="city-btn" onclick="setTarget(50.00, 36.23, 'ХАРЬКОВ')">ХАРЬКОВ</button>
+        <button class="city-btn" onclick="setTarget(46.48, 30.72, 'ОДЕССА')">ОДЕССА</button>
+
+        <div id="gifContainer">
+            <img id="impactGif" src="./pućin.gif" alt="Impact Animation">
+        </div>
+    </div>
+    <div id="map"></div>
+</div>
+
+<script>
+    const map = L.map('map', { zoomControl: false }).setView([48.3, 35.0], 5);
+    L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { maxZoom: 18, subdomains:['mt0','mt1','mt2','mt3'] }).addTo(map);
+
+    let targets = [];
+    let targetMarkers = [];
+    let audioStarted = false;
+    const LAUNCH_SITE = { lat: 55.75, lng: 37.61 };
+
+    function initAudio() {
+        if(!audioStarted) {
+            document.getElementById('siren').play();
+            audioStarted = true;
+        }
+    }
+
+    function setTarget(lat, lng, name) {
+        if (!window.event || !window.event.ctrlKey) clearTargets();
+        addTarget({lat, lng});
+        map.flyTo([lat, lng], 9, { duration: 1.5 });
+        document.getElementById('console').innerHTML += `<br>> ФОКУС: ${name}`;
+    }
+
+    map.on('click', (e) => {
+        if (!e.originalEvent.ctrlKey) clearTargets();
+        addTarget(e.latlng);
+        document.getElementById('console').innerHTML += `<br>> ЦЕЛЬ ДОБАВЛЕНА (${targets.length})`;
+    });
+
+    function addTarget(latlng) {
+        targets.push(latlng);
+        const marker = L.circleMarker(latlng, { color: 'red', radius: 8, weight: 3, fillOpacity: 0.3 }).addTo(map);
+        const range = L.circle(latlng, { radius: 15000, color: 'red', weight: 1, fillOpacity: 0.05, dashArray: '5, 10' }).addTo(map);
+        targetMarkers.push(marker, range);
+        
+        document.getElementById('launchBtn').disabled = false;
+        document.getElementById('massBtn').style.display = 'block';
+    }
+
+    function clearTargets() {
+        targets = [];
+        targetMarkers.forEach(m => map.removeLayer(m));
+        targetMarkers = [];
+        document.getElementById('launchBtn').disabled = true;
+        document.getElementById('massBtn').style.display = 'none';
+        document.getElementById('gifContainer').style.display = 'none';
+        document.getElementById('console').innerHTML += `<br>> СПИСОК ОЧИЩЕН.`;
+    }
+
+    function launchAttack(countPerTarget) {
+        document.getElementById('launchBtn').disabled = true;
+        document.getElementById('massBtn').disabled = true;
+        document.getElementById('bgMusic').play();
+        document.getElementById('console').innerHTML += `<br>> ЗАПУСК РАКЕТ...`;
+
+        const gifContainer = document.getElementById('gifContainer');
+        const gifImg = document.getElementById('impactGif');
+        
+        const currentSrc = gifImg.src;
+        gifImg.src = "";
+        gifImg.src = currentSrc;
+        
+        gifContainer.style.display = 'block';
+
+        targets.forEach((center, tIndex) => {
+            for(let i = 0; i < countPerTarget; i++) {
+                setTimeout(() => {
+                    const angle = Math.random() * Math.PI * 2;
+                    const radius = Math.random() * 0.135; 
+                    const dest = {
+                        lat: center.lat + Math.cos(angle) * radius,
+                        lng: center.lng + Math.sin(angle) * radius * 1.5
+                    };
+                    executeMissile(dest, countPerTarget === 1);
+                }, i * 80 + (tIndex * 150));
+            }
+        });
+
+        setTimeout(() => {
+            document.getElementById('launchBtn').disabled = false;
+            document.getElementById('massBtn').disabled = false;
+            document.getElementById('bgMusic').pause();
+            gifContainer.style.display = 'none';
+            document.getElementById('console').innerHTML += `<br>> УДАР ЗАВЕРШЕН.`;
+        }, 5000);
+    }
+
+    function executeMissile(destination, playSound) {
+        if(playSound) document.getElementById('bgMusic').play();
+        
+        const mIcon = L.divIcon({ html: `<div class="missile-body"></div>`, className: 'custom-missile' });
+        const missile = L.marker([LAUNCH_SITE.lat, LAUNCH_SITE.lng], { icon: mIcon }).addTo(map);
+        let progress = 0;
+
+        const flight = setInterval(() => {
+            progress += 0.015;
+            const curLat = LAUNCH_SITE.lat + (destination.lat - LAUNCH_SITE.lat) * progress;
+            const curLng = LAUNCH_SITE.lng + (destination.lng - LAUNCH_SITE.lng) * progress;
+            const arc = Math.sin(progress * Math.PI) * 3; 
+
+            missile.setLatLng([curLat + arc, curLng]);
+            const angle = progress < 0.5 ? -25 : 155;
+            if(missile.getElement()) missile.getElement().style.transform += ` rotate(${angle}deg)`;
+
+            if (progress >= 1) {
+                clearInterval(flight);
+                map.removeLayer(missile);
+                if(playSound) {
+                    document.getElementById('bgMusic').pause();
+                    document.getElementById('bgMusic').currentTime = 0;
+                }
+                triggerImpact(destination);
+            }
+        }, 20);
+    }
+
+    function triggerImpact(coords) {
+        L.circle(coords, {
+            radius: 4000,
+            color: '#111',
+            fillColor: '#000',
+            fillOpacity: 1,
+            weight: 1
+        }).addTo(map);
+
+        const flash = L.circle(coords, { radius: 6000, color: '#ffaa00', fillColor: '#fff', fillOpacity: 0.4 }).addTo(map);
+        setTimeout(() => map.removeLayer(flash), 100);
+    }
+</script>
+
+</body>
+</html>
